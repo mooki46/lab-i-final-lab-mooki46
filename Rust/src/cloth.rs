@@ -13,8 +13,8 @@ pub struct Point {
 
 #[derive(Clone, Copy)]
 pub struct Spring {
-    pub p1: Point,
-    pub p2: Point,
+    pub p1: (usize, usize),
+    pub p2: (usize, usize),
     pub rest_length: f32,
     pub spring_coeff: f32,
     pub damp_coeff: f32,
@@ -55,8 +55,8 @@ impl Cloth {
             for j in 0..m {
                 if i < n - 1 {
                     springs.push(Spring {
-                        p1: points[i][j],
-                        p2: points[i + 1][j],
+                        p1: (i, j),
+                        p2: (i + 1, j),
                         spring_coeff: 10.0,
                         damp_coeff: 0.03,
                         rest_length: 1.0,
@@ -65,8 +65,8 @@ impl Cloth {
 
                 if j < m - 1 {
                     springs.push(Spring {
-                        p1: points[i][j],
-                        p2: points[i][j + 1],
+                        p1: (i, j),
+                        p2: (i, j + 1),
                         spring_coeff: 10.0,
                         damp_coeff: 0.03,
                         rest_length: 1.0,
@@ -84,31 +84,36 @@ impl Cloth {
         }
     }
     pub fn simulate(&mut self, dt: f32) {
-        for row in &mut self.points {
-            for point in row {
+        let mut forces = vec![vec![(0.0, 0.0); self.points[0].len()]; self.points.len()];
+
+        for (i, row) in self.points.iter().enumerate() {
+            for (j, point) in row.iter().enumerate() {
                 let mut total_force_x = 0.0;
                 let mut total_force_y = 0.0;
-                //spring
+
+                //spring and damper
                 for spring in &self.springs {
-                    if
-                        (spring.p1.x == point.x && spring.p1.y == point.y) ||
-                        (spring.p2.x == point.x && spring.p2.y == point.y)
-                    {
-                        let dx = spring.p2.x - spring.p1.x;
-                        let dy = spring.p2.y - spring.p1.y;
+                    let point1 = &self.points[spring.p1.0][spring.p1.1];
+                    let point2 = &self.points[spring.p2.0][spring.p2.1];
 
-                        let distance = (dx * dx + dy * dy).sqrt();
-                        let magnitude = spring.spring_coeff * (distance - spring.rest_length);
+                    let dx = point2.x - point1.x;
+                    let dy = point2.y - point1.y;
 
-                        let spring_force_x = (magnitude * dx) / distance;
-                        let spring_force_y = (magnitude * dy) / distance;
+                    let distance = (dx * dx + dy * dy).sqrt();
+                    let magnitude = spring.spring_coeff * (distance - spring.rest_length);
 
-                        // damping
-                        let damping_force_x = -point.vx * spring.damp_coeff;
-                        let damping_force_y = -point.vy * spring.damp_coeff;
+                    let spring_force_x = (magnitude * dx) / distance;
+                    let spring_force_y = (magnitude * dy) / distance;
 
+                    let damping_force_x = -point.vx * spring.damp_coeff;
+                    let damping_force_y = -point.vy * spring.damp_coeff;
+
+                    if point1.x == point.x && point1.y == point.y {
                         total_force_x += spring_force_x + damping_force_x;
                         total_force_y += spring_force_y + damping_force_y;
+                    } else if point2.x == point.x && point2.y == point.y {
+                        total_force_x -= spring_force_x + damping_force_x;
+                        total_force_y -= spring_force_y + damping_force_y;
                     }
                 }
 
@@ -116,39 +121,47 @@ impl Cloth {
                 let gravity_force_x = 0.0;
                 let gravity_force_y = -self.g * self.m;
 
-                //external force
+                //external forces
                 let mut rng = rand::thread_rng();
-                let external_force_x = rng.gen_range(-1.0..1.0) * self.ext_m;
-                let external_force_y = rng.gen_range(-1.0..1.0) * self.ext_m;
+                let ext_force_x = rng.gen_range(-1.0..1.0) * self.ext_m;
+                let ext_force_y = rng.gen_range(-1.0..1.0) * self.ext_m;
 
-                //total force
-                total_force_x += gravity_force_x + external_force_x;
-                total_force_y += gravity_force_y + external_force_y;
+                //total
+                total_force_x += gravity_force_x + ext_force_x;
+                total_force_y += gravity_force_y + ext_force_y;
 
-                //acceleration
-                point.ax = total_force_x / self.m;
-                point.ay = total_force_y / self.m;
+                forces[i][j] = (total_force_x, total_force_y);
             }
         }
-        for row in &mut self.points {
-            for point in row {
+
+        for (i, row) in self.points.iter_mut().enumerate() {
+            for (j, point) in row.iter_mut().enumerate() {
                 if point.fixed {
                     continue;
                 }
+
+                let (fx, fy) = forces[i][j];
+
+                //accelaration
+                point.ax = fx / self.m;
+                point.ay = fy / self.m;
 
                 let prev_x = point.x;
                 let prev_y = point.y;
                 point.x += point.vx * dt + 0.5 * point.ax * dt * dt;
                 point.y += point.vy * dt + 0.5 * point.ay * dt * dt;
 
-                // Collision with floor
-                if point.y + point.vy * dt < -16.0 {
+                //floor colision
+                if point.y < -16.0 {
                     point.y = -16.0;
                     point.vy = -point.vy;
                 }
 
-                point.vx = (point.x - prev_x) / dt;
-                point.vy = (point.y - prev_y) / dt;
+                //velocity
+                let new_vx = (point.x - prev_x) / dt;
+                let new_vy = (point.y - prev_y) / dt;
+                point.vx = if point.y == -16.0 { -new_vy } else { new_vx };
+                point.vy = if point.y == -16.0 { -new_vy } else { new_vy };
             }
         }
     }

@@ -35,7 +35,7 @@ fn main() {
         .with_inner_size(1280, 1000)
         .build(&event_loop);
 
-    let n = 20;
+    let n = 10;
     let m = 20;
     // create cloth
     let mut cloth = Cloth::new(n, m);
@@ -48,7 +48,7 @@ fn main() {
 
     for row in &mut cloth.points {
         for point in row {
-            point.x -= (n as f32) / 2.0;
+            point.x -= (m as f32) / 2.0;
             point.y -= max_y;
             point.y += 14.0; // extra offset
         }
@@ -116,10 +116,10 @@ fn main() {
 
                         let indices: Vec<u16> = cloth.springs
                             .iter()
-                            .flat_map(|stick| {
+                            .flat_map(|spring| {
                                 vec![
-                                    (stick.p1.x as u16) * (m as u16) + (stick.p1.y as u16),
-                                    (stick.p2.x as u16) * (m as u16) + (stick.p2.y as u16)
+                                    (spring.p1.0 as u16) * (m as u16) + (spring.p1.1 as u16),
+                                    (spring.p2.0 as u16) * (m as u16) + (spring.p2.1 as u16)
                                 ]
                             })
                             .collect();
