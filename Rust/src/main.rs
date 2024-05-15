@@ -5,6 +5,7 @@ mod cloth;
 use glium::{ Surface, VertexBuffer };
 use std::fs;
 use std::io::Read;
+use nalgebra::{ Matrix4, Vector4 };
 
 use cloth::Cloth;
 
@@ -35,8 +36,9 @@ fn main() {
         .with_inner_size(1280, 1000)
         .build(&event_loop);
 
-    let n = 10;
+    let n = 20;
     let m = 20;
+
     // create cloth
     let mut cloth = Cloth::new(n, m);
 
@@ -61,28 +63,103 @@ fn main() {
         ::from_source(&display, &vertex_shader_src, &fragment_shader_src, None)
         .unwrap();
 
+    let mut mouse_pos = (0.0, 0.0);
+    let mut closest_point = None;
+    let mut window_size = (0, 0);
+    let mut matrix = [[0.0f32; 4]; 4];
+    let mut perspective = [[0.0f32; 4]; 4];
+
     // render loop
     let _ = event_loop.run(move |event, window_target| {
         match event {
+            winit::event::Event::DeviceEvent { event, .. } =>
+                match event {
+                    winit::event::DeviceEvent::MouseMotion { delta } => {
+                        mouse_pos.0 += delta.0 as f32;
+                        mouse_pos.1 += delta.1 as f32;
+                    }
+                    _ => (),
+                }
+
             winit::event::Event::WindowEvent { event, .. } =>
                 match event {
                     winit::event::WindowEvent::CloseRequested => window_target.exit(),
-                    winit::event::WindowEvent::MouseInput { .. } => {}
-                    winit::event::WindowEvent::Resized(window_size) => {
-                        display.resize(window_size.into());
+                    winit::event::WindowEvent::Resized(new_size) => {
+                        window_size = new_size.into();
+                        display.resize(window_size);
+                    }
+                    winit::event::WindowEvent::MouseInput { state, button, .. } => {
+                        if button == winit::event::MouseButton::Left {
+                            if state == winit::event::ElementState::Pressed {
+                                let matrix_matrix = Matrix4::from(matrix);
+                                let inv_matrix = matrix_matrix.try_inverse().unwrap();
+
+                                let pers_matrix = Matrix4::from(perspective);
+                                let inv_perspective = pers_matrix.try_inverse().unwrap();
+
+                                let mouse_ndc = Vector4::new(
+                                    (2.0 * mouse_pos.0) / (window_size.0 as f32) - 1.0,
+                                    (2.0 * ((window_size.1 as f32) - mouse_pos.1)) /
+                                        (window_size.1 as f32) -
+                                        1.0,
+                                    0.0,
+                                    1.0
+                                );
+                                let mouse_world = inv_matrix * inv_perspective * mouse_ndc;
+
+                                let closest = cloth.points
+                                    .iter()
+                                    .enumerate()
+                                    .flat_map(|(i, row)|
+                                        row
+                                            .iter()
+                                            .enumerate()
+                                            .map(move |(j, _)| (i, j))
+                                    )
+                                    .min_by_key(|&(i, j)| {
+                                        let point = &cloth.points[i][j];
+                                        let dx = point.x - mouse_world.x;
+                                        let dy = point.y - mouse_world.y;
+                                        (dx * dx + dy * dy) as i32
+                                    });
+
+                                if let Some((i, j)) = closest {
+                                    cloth.points[i][j].ext_m += 5.0;
+                                    closest_point = Some((i, j));
+                                }
+                            } else if state == winit::event::ElementState::Released {
+                                if let Some((i, j)) = closest_point {
+                                    cloth.points[i][j].ext_m = 0.0;
+                                }
+                                closest_point = None;
+                            }
+                        }
+                    }
+                    winit::event::WindowEvent::KeyboardInput { event, .. } => {
+                        if
+                            let winit::event::KeyEvent {
+                                state: winit::event::ElementState::Pressed,
+                                logical_key: winit::keyboard::Key::Character(c),
+                                ..
+                            } = event
+                        {
+                            if c.to_lowercase() == "g" {
+                                cloth.g_on = !cloth.g_on;
+                            }
+                        }
                     }
                     winit::event::WindowEvent::RedrawRequested => {
                         let mut target = display.draw();
                         target.clear_color(1.0, 1.0, 1.0, 1.0);
 
-                        let matrix = [
+                        matrix = [
                             [0.07, 0.0, 0.0, 0.0],
                             [0.0, 0.07, 0.0, 0.0],
                             [0.0, 0.0, 0.07, 0.0],
                             [0.0, 0.0, 2.0, 1.0f32],
                         ];
 
-                        let perspective = {
+                        perspective = {
                             let (width, height) = target.get_dimensions();
                             let aspect_ratio = (height as f32) / (width as f32);
 

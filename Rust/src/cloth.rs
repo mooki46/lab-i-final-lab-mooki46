@@ -9,6 +9,7 @@ pub struct Point {
     pub ax: f32,
     pub ay: f32,
     pub fixed: bool,
+    pub ext_m: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -25,13 +26,13 @@ pub struct Cloth {
     pub springs: Vec<Spring>,
     pub g: f32,
     pub m: f32,
-    pub ext_m: f32,
+    pub g_on: bool,
 }
 
 impl Cloth {
     pub fn new(n: usize, m: usize) -> Self {
         let mut points =
-            vec![vec![Point {x:0.0, y:0.0, vx:0.0, vy:0.0, ax:0.0, ay:0.0, fixed: false}; m]; n];
+            vec![vec![Point {x:0.0, y:0.0, vx:0.0, vy:0.0, ax:0.0, ay:0.0, fixed: false, ext_m:0.0}; m]; n];
         for i in 0..n {
             for j in 0..m {
                 points[i][j] = Point {
@@ -42,6 +43,7 @@ impl Cloth {
                     ax: 0.0,
                     ay: 0.0,
                     fixed: false,
+                    ext_m: 0.0,
                 };
             }
         }
@@ -80,7 +82,7 @@ impl Cloth {
             springs,
             g: 9.81,
             m: 0.01,
-            ext_m: 0.0,
+            g_on: true,
         }
     }
     pub fn simulate(&mut self, dt: f32) {
@@ -112,19 +114,19 @@ impl Cloth {
                         total_force_x += spring_force_x + damping_force_x;
                         total_force_y += spring_force_y + damping_force_y;
                     } else if point2.x == point.x && point2.y == point.y {
-                        total_force_x -= spring_force_x + damping_force_x;
-                        total_force_y -= spring_force_y + damping_force_y;
+                        total_force_x -= spring_force_x - damping_force_x;
+                        total_force_y -= spring_force_y - damping_force_y;
                     }
                 }
 
                 //gravity
                 let gravity_force_x = 0.0;
-                let gravity_force_y = -self.g * self.m;
+                let gravity_force_y = if self.g_on { -self.g * self.m } else { 0.0 };
 
                 //external forces
                 let mut rng = rand::thread_rng();
-                let ext_force_x = rng.gen_range(-1.0..1.0) * self.ext_m;
-                let ext_force_y = rng.gen_range(-1.0..1.0) * self.ext_m;
+                let ext_force_x = rng.gen_range(-1.0..1.0) * point.ext_m;
+                let ext_force_y = rng.gen_range(-1.0..1.0) * point.ext_m;
 
                 //total
                 total_force_x += gravity_force_x + ext_force_x;
@@ -154,7 +156,7 @@ impl Cloth {
                 //floor colision
                 if point.y < -16.0 {
                     point.y = -16.0;
-                    point.vy = -point.vy;
+                    point.vy = 0.0;
                 }
 
                 //velocity
