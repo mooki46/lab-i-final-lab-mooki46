@@ -1,13 +1,18 @@
 #[macro_use]
 extern crate glium;
 extern crate winit;
-mod cloth;
-use glium::{ Surface, VertexBuffer };
-use std::fs;
-use std::io::Read;
-use nalgebra::{ Matrix4, Vector4 };
 
+mod cloth;
+
+use glium::{ Surface, VertexBuffer };
+use std::{ fs, time::Instant };
+use std::io::Read;
 use cloth::Cloth;
+
+extern crate num_cpus;
+use once_cell::sync::Lazy;
+
+pub static CORE_COUNT: Lazy<usize> = Lazy::new(|| num_cpus::get_physical());
 
 #[derive(Copy, Clone)]
 struct Vertex {
@@ -25,6 +30,8 @@ fn read_shader_src(path: &str) -> &'static str {
 }
 
 fn main() {
+    println!("Core Count: {}", *CORE_COUNT);
+
     // create event loop
     let event_loop = winit::event_loop::EventLoopBuilder
         ::new()
@@ -67,7 +74,14 @@ fn main() {
     let mut closest_point = None;
     let mut window_size = (0, 0);
     let mut matrix = [[0.0f32; 4]; 4];
-    let mut perspective = [[0.0f32; 4]; 4];
+    let mut aspect_ratio: f32 = 0.0;
+
+    let mut fps_values = Vec::new();
+    let mut simulation_times = Vec::new();
+    let mut frame_draw_times = Vec::new();
+    let mut last_frame_time = Instant::now();
+
+    let mut affected_point: Option<(usize, usize)> = None;
 
     // render loop
     let _ = event_loop.run(move |event, window_target| {
@@ -83,7 +97,31 @@ fn main() {
 
             winit::event::Event::WindowEvent { event, .. } =>
                 match event {
-                    winit::event::WindowEvent::CloseRequested => window_target.exit(),
+                    winit::event::WindowEvent::CloseRequested => {
+                        // calculate and print average fps
+                        if !fps_values.is_empty() {
+                            fps_values.remove(0); // remove the first frame
+                            let total_frames = fps_values.len();
+                            let avg_fps = fps_values.iter().sum::<f32>() / (total_frames as f32);
+                            println!("Average FPS: {}", avg_fps);
+                        }
+
+                        if !simulation_times.is_empty() {
+                            let total_sims = simulation_times.len();
+                            let avg_time: f32 =
+                                simulation_times.iter().sum::<f32>() / (total_sims as f32);
+                            println!("Average Simulation Time: {} ms", avg_time);
+                        }
+
+                        if !frame_draw_times.is_empty() {
+                            let total_draws = frame_draw_times.len();
+                            let avg_time: f32 =
+                                frame_draw_times.iter().sum::<f32>() / (total_draws as f32);
+                            println!("Average Draw Time: {} ms", avg_time);
+                        }
+
+                        window_target.exit()
+                    }
                     winit::event::WindowEvent::Resized(new_size) => {
                         window_size = new_size.into();
                         display.resize(window_size);
@@ -91,40 +129,32 @@ fn main() {
                     winit::event::WindowEvent::MouseInput { state, button, .. } => {
                         if button == winit::event::MouseButton::Left {
                             if state == winit::event::ElementState::Pressed {
-                                let matrix_matrix = Matrix4::from(matrix);
-                                let inv_matrix = matrix_matrix.try_inverse().unwrap();
+                                let mouse_world_x =
+                                    (mouse_pos.0 / (window_size.0 as f32)) * 2.0 - 1.0;
+                                let mouse_world_y =
+                                    1.0 - (mouse_pos.1 / (window_size.1 as f32)) * 2.0;
 
-                                let pers_matrix = Matrix4::from(perspective);
-                                let inv_perspective = pers_matrix.try_inverse().unwrap();
-
-                                let mouse_ndc = Vector4::new(
-                                    (2.0 * mouse_pos.0) / (window_size.0 as f32) - 1.0,
-                                    (2.0 * ((window_size.1 as f32) - mouse_pos.1)) /
-                                        (window_size.1 as f32) -
-                                        1.0,
-                                    0.0,
-                                    1.0
-                                );
-                                let mouse_world = inv_matrix * inv_perspective * mouse_ndc;
-
+                                // Iterate over cloth points to find the closest one to the mouse
                                 let closest = cloth.points
                                     .iter()
                                     .enumerate()
-                                    .flat_map(|(i, row)|
-                                        row
-                                            .iter()
+                                    .flat_map(|(i, row)| {
+                                        row.iter()
                                             .enumerate()
                                             .map(move |(j, _)| (i, j))
-                                    )
+                                    })
                                     .min_by_key(|&(i, j)| {
                                         let point = &cloth.points[i][j];
-                                        let dx = point.x - mouse_world.x;
-                                        let dy = point.y - mouse_world.y;
+                                        // Apply the same transformation as in rendering
+                                        let transformed_x = point.x * 0.06 * aspect_ratio;
+                                        let transformed_y = point.y * 0.06;
+                                        let dx = transformed_x - mouse_world_x;
+                                        let dy = transformed_y - mouse_world_y;
                                         (dx * dx + dy * dy) as i32
                                     });
 
                                 if let Some((i, j)) = closest {
-                                    cloth.points[i][j].ext_m += 5.0;
+                                    cloth.points[i][j].ext_m += 10.0;
                                     closest_point = Some((i, j));
                                 }
                             } else if state == winit::event::ElementState::Released {
@@ -138,49 +168,61 @@ fn main() {
                     winit::event::WindowEvent::KeyboardInput { event, .. } => {
                         if
                             let winit::event::KeyEvent {
-                                state: winit::event::ElementState::Pressed,
+                                state,
                                 logical_key: winit::keyboard::Key::Character(c),
                                 ..
                             } = event
                         {
-                            if c.to_lowercase() == "g" {
+                            if
+                                c.to_lowercase() == "g" &&
+                                state == winit::event::ElementState::Pressed
+                            {
                                 cloth.g_on = !cloth.g_on;
+                            }
+
+                            if c.to_lowercase() == "f" {
+                                if
+                                    state == winit::event::ElementState::Pressed &&
+                                    affected_point.is_none()
+                                {
+                                    let i = rand::random::<usize>() % cloth.points.len();
+                                    let j = rand::random::<usize>() % cloth.points[0].len();
+
+                                    cloth.points[i][j].ext_m += 10.0;
+                                    affected_point = Some((i, j));
+                                } else if state == winit::event::ElementState::Released {
+                                    if let Some((i, j)) = affected_point {
+                                        cloth.points[i][j].ext_m = 0.0;
+                                    }
+                                    affected_point = None;
+                                }
                             }
                         }
                     }
                     winit::event::WindowEvent::RedrawRequested => {
+                        let frame_start_time = Instant::now();
+                        let frame_time = frame_start_time.duration_since(last_frame_time);
+                        let fps = 1.0 / frame_time.as_secs_f32();
+                        fps_values.push(fps);
+
                         let mut target = display.draw();
                         target.clear_color(1.0, 1.0, 1.0, 1.0);
 
+                        let width = window_size.0;
+                        let height = window_size.1;
+
+                        aspect_ratio = (height as f32) / (width as f32);
+
                         matrix = [
-                            [0.07, 0.0, 0.0, 0.0],
-                            [0.0, 0.07, 0.0, 0.0],
-                            [0.0, 0.0, 0.07, 0.0],
-                            [0.0, 0.0, 2.0, 1.0f32],
+                            [0.06 * aspect_ratio, 0.0, 0.0, 0.0],
+                            [0.0, 0.06, 0.0, 0.0],
+                            [0.0, 0.0, 1.0, 0.0],
+                            [0.0, 0.0, 0.0, 1.0f32],
                         ];
-
-                        perspective = {
-                            let (width, height) = target.get_dimensions();
-                            let aspect_ratio = (height as f32) / (width as f32);
-
-                            let fov: f32 = 3.141592 / 3.0;
-                            let zfar = 1024.0;
-                            let znear = 0.1;
-
-                            let f = 1.0 / (fov / 2.0).tan();
-
-                            [
-                                [f * aspect_ratio, 0.0, 0.0, 0.0],
-                                [0.0, f, 0.0, 0.0],
-                                [0.0, 0.0, (zfar + znear) / (zfar - znear), 1.0],
-                                [0.0, 0.0, -(2.0 * zfar * znear) / (zfar - znear), 0.0],
-                            ]
-                        };
 
                         let uniforms =
                             uniform! {
                             matrix: matrix,
-                            perspective: perspective,
                         };
 
                         // convert to vertices and indices
@@ -208,8 +250,13 @@ fn main() {
                             .unwrap();
 
                         // update simulation
+                        let sim_start = Instant::now();
                         cloth.simulate(0.01);
+                        let sim_end = Instant::now();
+                        let sim_time = sim_end.duration_since(sim_start).as_millis();
+                        simulation_times.push(sim_time as f32);
 
+                        let draw_start = Instant::now();
                         target
                             .draw(
                                 &vertex_buffer,
@@ -219,7 +266,13 @@ fn main() {
                                 &Default::default()
                             )
                             .unwrap();
+                        let draw_end = Instant::now();
+                        let draw_time = draw_end.duration_since(draw_start).as_micros();
+                        frame_draw_times.push((draw_time as f32) / 1000.0); // convert to millis
+
                         target.finish().unwrap();
+
+                        last_frame_time = frame_start_time;
                     }
                     _ => (),
                 }
