@@ -1,7 +1,6 @@
 #[macro_use]
 extern crate glium;
 extern crate winit;
-use std::env;
 
 mod cloth;
 
@@ -31,7 +30,6 @@ fn read_shader_src(path: &str) -> &'static str {
 }
 
 fn main() {
-    env::set_var("RUST_BACKTRACE", "1");
     println!("Core Count: {}", *CORE_COUNT);
 
     // create event loop
@@ -262,7 +260,7 @@ fn main() {
                         // update simulation
                         for _ in 0..10 {
                             let sim_start = Instant::now();
-                            cloth.simulate_multithreaded(0.01);
+                            cloth.simulate(0.01);
                             let sim_end = Instant::now();
                             let sim_time = sim_end.duration_since(sim_start).as_micros();
                             simulation_times.push((sim_time as f32) / 1000.0); // convert to millis
