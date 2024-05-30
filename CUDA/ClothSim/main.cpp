@@ -12,20 +12,29 @@
 #include <curand_kernel.h>
 #include <time.h>
 #include <filesystem>
+#include <optional>
 
 extern "C" void simulateKernel(Point * points, Spring * springs, int N, int M, int num_springs, float dt, float g, bool g_on, float m);
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mode);
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mode);
+void cursor_position_callback(GLFWwindow* window, double xpos, double ypos);
 char* read_shader_src(const std::string& path);
 std::vector<Point> flatten_points(const std::vector<std::vector<Point>>& points, int N, int M);
 void unflatten_points(std::vector<std::vector<Point>>& points, const std::vector<Point>& flattenedPoints, int N, int M);
 void simulateCUDA(float dt);
 
 const int N = 20;
-const int M = 40;
+const int M = 20;
 
 Cloth cloth(N, M);
+double mouse_x, mouse_y;
+int window_width = 1280;
+int window_height = 1000;
+std::optional<std::pair<int, int>> closest_point;
+std::optional<std::pair<int, int>> affected_point;
+std::optional<std::pair<int, int>> moving_point;
 
 int main() {
 	// initialize cloth
@@ -78,11 +87,13 @@ int main() {
 	gladLoadGL();
 
 	// Specify the viewport of OpenGL in the Window
-	glViewport(0, 0, 1280, 1000);
+	glViewport(0, 0, window_width, window_height);
 
 	// Set the callback functions
 	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 	glfwSetKeyCallback(window, key_callback);
+	glfwSetMouseButtonCallback(window, mouse_button_callback);
+	glfwSetCursorPosCallback(window, cursor_position_callback);
 
 	// Create Vertex Shader Object and get its reference
 	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -155,7 +166,7 @@ int main() {
 
 		auto frame_start = std::chrono::high_resolution_clock::now();
 
-		for (int i = 0; i < 10; i++)
+		for (int i = 0; i < 5; i++)
 		{
 			auto sim_start = std::chrono::high_resolution_clock::now();
 			//cloth.simulate(0.01f);
@@ -187,6 +198,7 @@ int main() {
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 
+		// draw
 		auto draw_start = std::chrono::high_resolution_clock::now();
 		glClear(GL_COLOR_BUFFER_BIT);
 
@@ -252,10 +264,134 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 		// Toggle gravity
 		cloth.g_on = !cloth.g_on;
 	}
+	else if (key == GLFW_KEY_F) {
+		if (action == GLFW_PRESS && !affected_point) {
+			int i = rand() % cloth.points.size(); 
+			int j = rand() % cloth.points[0].size(); 
+
+			cloth.points[i][j].ext_m += 5.0f;
+			affected_point = std::make_pair(i, j);
+		}
+		else if (action == GLFW_RELEASE && affected_point) {
+			auto [i, j] = *affected_point;
+			cloth.points[i][j].ext_m = 0.0f;
+			affected_point.reset();
+		}
+	}
 }
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 	glViewport(0, 0, width, height);
+	window_width = width;
+	window_height = height;
+}
+
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+	const float max_radius = 0.025f;
+
+	float norm_mouse_x = (mouse_x / window_width) * 2.0f - 1.0f;
+	float norm_mouse_y = -((mouse_y / window_height) * 2.0f - 1.0f);
+
+	float aspect_ratio = (float)window_width / (float)window_height;
+	norm_mouse_x *= aspect_ratio;
+
+	if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+		if (action == GLFW_PRESS) {
+			// find closest point to mouse
+			closest_point = std::nullopt;
+			float min_dist = std::numeric_limits<float>::max();
+
+			for (int i = 0; i < cloth.points.size(); i++) {
+				for (int j = 0; j < cloth.points[0].size(); j++) {
+					auto& point = cloth.points[i][j];
+					// Assuming point coordinates are in the range [-1, 1] after transformations
+					float t_point_x = point.x * 0.06f;
+					float t_point_y = point.y * 0.06f;
+
+					float dx = t_point_x - norm_mouse_x;
+					float dy = t_point_y - norm_mouse_y;
+
+					float dist = sqrt(dx * dx + dy * dy);
+
+					if (dist < min_dist && dist <= max_radius) {
+						min_dist = dist;
+						closest_point = std::make_pair(i, j);
+					}
+				}
+			}
+
+			if (closest_point) {
+				auto [i, j] = *closest_point;
+				cloth.points[i][j].ext_m += 10.0f;
+			}
+		}
+		else if (action == GLFW_RELEASE) {
+			if (closest_point) {
+				auto [i, j] = *closest_point;
+				cloth.points[i][j].ext_m = 0.0f;
+				closest_point.reset();
+			}
+		}
+	}
+	else if (button == GLFW_MOUSE_BUTTON_LEFT) {
+		if (action == GLFW_PRESS)
+		{
+			moving_point = std::nullopt;
+			float min_dist = std::numeric_limits<float>::max();
+			for (int i = 0; i < cloth.points.size(); i++)
+			{
+				for (int j = 0; j < cloth.points[0].size(); j++)
+				{
+					auto& point = cloth.points[i][j];
+
+					float t_point_x = point.x * 0.06f;
+					float t_point_y = point.y * 0.06f;
+
+					float dx = t_point_x - norm_mouse_x;
+					float dy = t_point_y - norm_mouse_y;
+
+					float dist = sqrt(dx * dx + dy * dy);
+
+					if (dist < min_dist && dist <= max_radius) {
+						min_dist = dist;
+						moving_point = std::make_pair(i, j);
+						cloth.points[i][j].fixed = true;
+					}
+				}
+			}
+		} else if (action == GLFW_RELEASE) {
+			if (moving_point) {
+				auto [i, j] = *moving_point;
+				if (!cloth.points[i][j].static_point) {
+					cloth.points[i][j].fixed = false;
+				}
+				moving_point.reset();
+			}
+        }
+	}
+}
+
+void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
+	mouse_x = xpos;
+	mouse_y = ypos;
+
+	if (moving_point) {
+		// Normalize mouse positions to range [-1, 1]
+		float norm_mouse_x = (mouse_x / window_width) * 2.0f - 1.0f;
+		float norm_mouse_y = -((mouse_y / window_height) * 2.0f - 1.0f);
+
+		// Adjust for aspect ratio
+		float aspect_ratio = (float)window_width / (float)window_height;
+		norm_mouse_x *= aspect_ratio;
+
+		// Convert normalized coordinates to world coordinates
+		float new_x = norm_mouse_x / 0.06f;
+		float new_y = norm_mouse_y / 0.06f;
+
+		auto [i, j] = *moving_point;
+		cloth.points[i][j].x = new_x;
+		cloth.points[i][j].y = new_y;
+	}
 }
 
 // Function to read shader source code from a file

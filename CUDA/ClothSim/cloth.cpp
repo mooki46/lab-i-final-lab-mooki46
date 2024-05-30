@@ -12,7 +12,9 @@ Cloth::Cloth(int n, int m) : g(9.81f), m(0.01f), g_on(true) {
 	}
 
 	points[n - 1][0].fixed = true;
+	points[n - 1][0].static_point = true;
 	points[n - 1][m - 1].fixed = true;
+	points[n - 1][m - 1].static_point = true;
 
 	for (int i = 0; i < n; i++) {
 		for (int j = 0; j < m; j++) {

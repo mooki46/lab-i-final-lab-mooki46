@@ -9,10 +9,11 @@ struct Point {
 	float vx, vy;
 	float ax, ay;
 	bool fixed;
+	bool static_point;
 	float ext_m;
 
-	Point(float x, float y, float vx = 0.0f, float vy = 0.0f, float ax = 0.0f, float ay = 0.0f, bool fixed = false, float ext_m = 0.0f)
-		: x(x), y(y), vx(vx), vy(vy), ax(ax), ay(ay), fixed(fixed), ext_m(ext_m) {}
+	Point(float x, float y, float vx = 0.0f, float vy = 0.0f, float ax = 0.0f, float ay = 0.0f, bool fixed = false, bool static_point = false, float ext_m = 0.0f)
+		: x(x), y(y), vx(vx), vy(vy), ax(ax), ay(ay), fixed(fixed), static_point(static_point), ext_m(ext_m) {}
 };
 
 struct Spring {
