@@ -1,6 +1,7 @@
 use rand::Rng;
 use crate::CORE_COUNT;
-use rayon::prelude::*;
+use std::sync::{ Arc, Mutex, MutexGuard };
+use scoped_threadpool;
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Point {
     pub x: f32,
@@ -172,137 +173,131 @@ impl Cloth {
     }
 
     pub fn simulate_multithreaded(&mut self, dt: f32) {
-        let num_threads = 4 * (*CORE_COUNT as u32);
-        let points_per_thread = (self.points.len() * self.points[0].len()) / (num_threads as usize);
+        let num_threads = 2 * (*CORE_COUNT as usize);
+        // let num_threads = 2;
+        let rows_per_thread = self.points.len() / num_threads;
 
-        let points_read_flattened = flatten_points(&self.points);
+        let mut pool = scoped_threadpool::Pool::new(num_threads as u32);
 
-        let num_cols = self.points[0].len();
+        let points_arc = Arc::new(Mutex::new(self.points.clone()));
 
-        let mut points_write_flattened = flatten_points(&self.points.clone());
+        let m = self.m;
+        let g = self.g;
+        let g_on = self.g_on;
 
-        points_write_flattened
-            .par_chunks_mut(points_per_thread)
-            .for_each(|write_chunk| {
-                simulate_chunk(
-                    &points_read_flattened,
-                    write_chunk,
-                    &self.springs,
-                    dt,
-                    self.g,
-                    self.m,
-                    self.g_on,
-                    num_cols
-                )
-            });
+        pool.scoped(|scope| {
+            for i in 0..num_threads {
+                let start_row = i * rows_per_thread;
+                let end_row = if i == num_threads - 1 {
+                    self.points.len()
+                } else {
+                    (i + 1) * rows_per_thread
+                };
 
-        // Update the original points with the modified values
-        self.points = unflatten_points(&points_write_flattened, num_cols);
+                let points_arc = Arc::clone(&points_arc);
+
+                let springs = &self.springs;
+
+                scope.execute(move || {
+                    let mut points = points_arc.lock().unwrap();
+                    simulate_segment(&mut points, springs, start_row, end_row, dt, m, g, g_on);
+                });
+            }
+        });
+
+        let points = Arc::try_unwrap(points_arc).unwrap().into_inner().unwrap();
+        self.points = points;
     }
 }
 
-pub fn simulate_chunk(
-    points_read: &[Point],
-    points_write: &mut [Point],
-    springs: &[Spring],
+fn simulate_segment(
+    points: &mut Vec<Vec<Point>>,
+    springs: &Vec<Spring>,
+    start_row: usize,
+    end_row: usize,
     dt: f32,
-    g: f32,
     m: f32,
-    g_on: bool,
-    num_cols: usize
+    g: f32,
+    g_on: bool
 ) {
-    for point in points_write.iter_mut() {
-        if point.fixed {
-            continue;
-        }
+    // Calculate forces for the assigned cloth section
+    let mut forces = vec![vec![(0.0,0.0); points[0].len()]; end_row - start_row];
 
-        let mut total_force_x = 0.0;
-        let mut total_force_y = 0.0;
+    for (i, row) in points[start_row..end_row].iter().enumerate() {
+        for (j, point) in row.iter().enumerate() {
+            let mut total_force_x = 0.0;
+            let mut total_force_y = 0.0;
 
-        for spring in springs {
-            let row1 = spring.p1.0;
-            let col1 = spring.p1.1;
+            //spring and damper
+            for spring in springs {
+                let point1 = &points[spring.p1.0][spring.p1.1];
+                let point2 = &points[spring.p2.0][spring.p2.1];
 
-            let row2 = spring.p2.0;
-            let col2 = spring.p2.1;
+                let dx = point2.x - point1.x;
+                let dy = point2.y - point1.y;
 
-            let p1 = &points_read[row1 * num_cols + col1];
-            // println!("Point 1: {}", row1 * num_cols + col1);
+                let distance = (dx * dx + dy * dy).sqrt();
+                let magnitude = spring.spring_coeff * (distance - spring.rest_length);
 
-            let p2 = &points_read[row2 * num_cols + col2];
-            // println!("Point 2: {}", row2 * num_cols + col2);
-
-            // Apply forces only if the current point is one of the points connected by the spring
-            if point == p1 || point == p2 {
-                let dx = p2.x - p1.x;
-                let dy = p2.y - p1.y;
-
-                let dist = (dx * dx + dy * dy).sqrt();
-                let magnitude = spring.spring_coeff * (dist - spring.rest_length);
-
-                let spring_force_x = (magnitude * dx) / dist;
-                let spring_force_y = (magnitude * dy) / dist;
+                let spring_force_x = (magnitude * dx) / distance;
+                let spring_force_y = (magnitude * dy) / distance;
 
                 let damping_force_x = -point.vx * spring.damp_coeff;
                 let damping_force_y = -point.vy * spring.damp_coeff;
 
-                if point == p1 {
+                if point1.x == point.x && point1.y == point.y {
                     total_force_x += spring_force_x + damping_force_x;
                     total_force_y += spring_force_y + damping_force_y;
-                } else {
+                } else if point2.x == point.x && point2.y == point.y {
                     total_force_x -= spring_force_x - damping_force_x;
                     total_force_y -= spring_force_y - damping_force_y;
                 }
             }
+
+            //gravity
+            let gravity_force_x = 0.0;
+            let gravity_force_y = if g_on { -g * m } else { 0.0 };
+
+            //external forces
+            let mut rng = rand::thread_rng();
+            let ext_force_x = rng.gen_range(-1.0..1.0) * point.ext_m;
+            let ext_force_y = rng.gen_range(-1.0..1.0) * point.ext_m;
+
+            //total
+            total_force_x += gravity_force_x + ext_force_x;
+            total_force_y += gravity_force_y + ext_force_y;
+
+            forces[i][j] = (total_force_x, total_force_y);
         }
-
-        // gravity
-        let gravity_force_x = 0.0;
-        let gravity_force_y = if g_on { -g * m } else { 0.0 };
-
-        // external forces
-        let mut rng = rand::thread_rng();
-        let ext_force_x = rng.gen_range(-1.0..1.0) * point.ext_m;
-        let ext_force_y = rng.gen_range(-1.0..1.0) * point.ext_m;
-
-        // total
-        total_force_x += gravity_force_x + ext_force_x;
-        total_force_y += gravity_force_y + ext_force_y;
-
-        // acceleration
-        point.ax = total_force_x / m;
-        point.ay = total_force_y / m;
-
-        let prev_x = point.x;
-        let prev_y = point.y;
-
-        point.x += point.vx * dt + 0.5 * point.ax * dt * dt;
-        point.y += point.vy * dt + 0.5 * point.ay * dt * dt;
-
-        // floor collision
-        if point.y < -32.0 {
-            point.y = -32.0;
-            point.vy = 0.0;
-        }
-
-        // velocity
-        let new_vx = (point.x - prev_x) / dt;
-        let new_vy = (point.y - prev_y) / dt;
-        point.vx = if point.y == -32.0 { -new_vy } else { new_vx };
-        point.vy = if point.y == -32.0 { -new_vy } else { new_vy };
     }
-}
+    for (i, row) in points[start_row..end_row].iter_mut().enumerate() {
+        for (j, point) in row.iter_mut().enumerate() {
+            if point.fixed {
+                continue;
+            }
 
-fn flatten_points(points: &[Vec<Point>]) -> Vec<Point> {
-    points
-        .iter()
-        .flat_map(|row| row.iter().cloned())
-        .collect()
-}
+            let (fx, fy) = forces[i][j];
 
-fn unflatten_points(flattened_points: &[Point], row_len: usize) -> Vec<Vec<Point>> {
-    flattened_points
-        .chunks(row_len)
-        .map(|chunk| chunk.to_vec())
-        .collect()
+            //accelaration
+            point.ax = fx / m;
+            point.ay = fy / m;
+
+            let prev_x = point.x;
+            let prev_y = point.y;
+            point.x += point.vx * dt + 0.5 * point.ax * dt * dt;
+            point.y += point.vy * dt + 0.5 * point.ay * dt * dt;
+
+            //floor colision
+            if point.y < -32.0 {
+                point.y = -32.0;
+                point.vy = 0.0;
+            }
+
+            //velocity
+            let new_vx = (point.x - prev_x) / dt;
+            let new_vy = (point.y - prev_y) / dt;
+            point.vx = if point.y == -32.0 { -new_vy } else { new_vx };
+            point.vy = if point.y == -32.0 { -new_vy } else { new_vy };
+        }
+    }
 }

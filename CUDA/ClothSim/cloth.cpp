@@ -97,15 +97,15 @@ void Cloth::simulate(float dt) {
             points[i][j].x += points[i][j].vx * dt + 0.5f * points[i][j].ax * dt * dt;
             points[i][j].y += points[i][j].vy * dt + 0.5f * points[i][j].ay * dt * dt;
 
-            if (points[i][j].y < -16.0f) {
-                points[i][j].y = -16.0f;
+            if (points[i][j].y < -32.0f) {
+                points[i][j].y = -32.0f;
                 points[i][j].vy = 0.0f;
             }
 
             float new_vx = (points[i][j].x - prev_x) / dt;
             float new_vy = (points[i][j].y - prev_y) / dt;
 
-            if (points[i][j].y == -16.0f) {
+            if (points[i][j].y == -32.0f) {
                 points[i][j].vx = -new_vy;
                 points[i][j].vy = -new_vy;
             }

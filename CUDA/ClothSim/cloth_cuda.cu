@@ -4,7 +4,7 @@
 #include <curand_kernel.h>
 #include <time.h>
 
-__global__ void simulatePoint(Point* points, Spring* springs, int N, int M, int num_springs, float dt, float g, float g_on, float m) {
+__global__ void simulate_point(Point* points, Spring* springs, int N, int M, int num_springs, float dt, float g, float g_on, float m) {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	int num_points = N * M;
 	if (idx >= num_points) return;
@@ -82,15 +82,15 @@ __global__ void simulatePoint(Point* points, Spring* springs, int N, int M, int 
 	p->y += p->vy * dt + 0.5f * p->ay * dt * dt;
 
 	//floor collision
-	if (p->y < -16.0f) {
-		p->y = -16.0f;
+	if (p->y < -32.0f) {
+		p->y = -32.0f;
 		p->vy = 0.0f;
 	}
 
 	float new_vx = (p->x - prev_x) / dt;
 	float new_vy = (p->y - prev_y) / dt;
 
-	if (p->y == -16.0f) {
+	if (p->y == -32.0f) {
 		p->vx = -new_vy;
 		p->vy = -new_vy;
 	}
@@ -100,41 +100,40 @@ __global__ void simulatePoint(Point* points, Spring* springs, int N, int M, int 
 	}
 }
 
-extern "C" void simulateKernel(Point * points, Spring * springs, int N, int M, int num_springs, float dt, float g, bool g_on, float m) {
-	//printf("CUDA simulation started...\n");
+extern "C" void simulate_kernel(Point * points, Spring * springs, int N, int M, int num_springs, float dt, float g, bool g_on, float m) {
 	int num_points = N * M;
 
 	Point* d_points;
 	Spring* d_springs;
 
-	cudaError_t cudaStatus;
+	cudaError_t cuda_status;
 
-	cudaStatus = cudaMalloc(&d_points, num_points * sizeof(Point));
-	if (cudaStatus != cudaSuccess) {
+	cuda_status = cudaMalloc(&d_points, num_points * sizeof(Point));
+	if (cuda_status != cudaSuccess) {
 		fprintf(stderr, "cudaMalloc failed!");
 	}
 
-	cudaStatus = cudaMalloc(&d_springs, num_springs * sizeof(Spring));
-	if (cudaStatus != cudaSuccess) {
+	cuda_status = cudaMalloc(&d_springs, num_springs * sizeof(Spring));
+	if (cuda_status != cudaSuccess) {
 		fprintf(stderr, "cudaMalloc failed!");
 	}
 	
 
-	cudaStatus = cudaMemcpy(d_points, points, num_points * sizeof(Point), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
+	cuda_status = cudaMemcpy(d_points, points, num_points * sizeof(Point), cudaMemcpyHostToDevice);
+	if (cuda_status != cudaSuccess) {
 		fprintf(stderr, "cudaMemcpy failed!");
 	}
 
-	cudaStatus = cudaMemcpy(d_springs, springs, num_springs * sizeof(Spring), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
+	cuda_status = cudaMemcpy(d_springs, springs, num_springs * sizeof(Spring), cudaMemcpyHostToDevice);
+	if (cuda_status != cudaSuccess) {
 		fprintf(stderr, "cudaMemcpy failed!");
 	}
 
-	int blockSize = 512;
+	int block_size = 512;
 
-	int numBlocks = (num_points + blockSize - 1) / blockSize;
+	int num_blocks = (num_points + block_size - 1) / block_size;
 
-	simulatePoint << <numBlocks, blockSize >> > (d_points, d_springs, N, M, num_springs, dt, g, g_on, m);
+	simulate_point << <num_blocks, block_size >> > (d_points, d_springs, N, M, num_springs, dt, g, g_on, m);
 
 	cudaDeviceSynchronize();
 	cudaGetLastError();

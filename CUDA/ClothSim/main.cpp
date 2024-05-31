@@ -14,7 +14,7 @@
 #include <filesystem>
 #include <optional>
 
-extern "C" void simulateKernel(Point * points, Spring * springs, int N, int M, int num_springs, float dt, float g, bool g_on, float m);
+extern "C" void simulate_kernel(Point * points, Spring * springs, int N, int M, int num_springs, float dt, float g, bool g_on, float m);
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mode);
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
@@ -23,10 +23,10 @@ void cursor_position_callback(GLFWwindow* window, double xpos, double ypos);
 char* read_shader_src(const std::string& path);
 std::vector<Point> flatten_points(const std::vector<std::vector<Point>>& points, int N, int M);
 void unflatten_points(std::vector<std::vector<Point>>& points, const std::vector<Point>& flattenedPoints, int N, int M);
-void simulateCUDA(float dt);
+void simulate_CUDA(float dt);
 
-const int N = 20;
-const int M = 20;
+const int N = 40;
+const int M = 40;
 
 Cloth cloth(N, M);
 double mouse_x, mouse_y;
@@ -50,7 +50,7 @@ int main() {
 		for (auto& point : row) {
 			point.x -= M / 2.0f;
 			point.y -= max_y;
-			point.y += 15.0f;
+			point.y += 30.0f;
 		}
 	}
 
@@ -170,7 +170,7 @@ int main() {
 		{
 			auto sim_start = std::chrono::high_resolution_clock::now();
 			//cloth.simulate(0.01f);
-			simulateCUDA(0.01f);
+			simulate_CUDA(0.01f);
 			auto sim_end = std::chrono::high_resolution_clock::now();
 			double sim_time = std::chrono::duration<double, std::milli>(sim_end - sim_start).count();
 			simulation_times.push_back(sim_time);
@@ -209,8 +209,8 @@ int main() {
 		float aspect_ratio = (float)width / (float)height;
 
 		float matrix[16] = {
-			0.06f / aspect_ratio, 0.0f, 0.0f, 0.0f,
-			0.0f, 0.06f, 0.0f, 0.0f,
+			0.03f / aspect_ratio, 0.0f, 0.0f, 0.0f,
+			0.0f, 0.03f, 0.0f, 0.0f,
 			0.0f, 0.0f, 1.0f, 0.0f,
 			0.0f, 0.0f, 0.0f, 1.0f
 		};
@@ -305,8 +305,8 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 				for (int j = 0; j < cloth.points[0].size(); j++) {
 					auto& point = cloth.points[i][j];
 					// Assuming point coordinates are in the range [-1, 1] after transformations
-					float t_point_x = point.x * 0.06f;
-					float t_point_y = point.y * 0.06f;
+					float t_point_x = point.x * 0.03f;
+					float t_point_y = point.y * 0.03f;
 
 					float dx = t_point_x - norm_mouse_x;
 					float dy = t_point_y - norm_mouse_y;
@@ -344,8 +344,8 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 				{
 					auto& point = cloth.points[i][j];
 
-					float t_point_x = point.x * 0.06f;
-					float t_point_y = point.y * 0.06f;
+					float t_point_x = point.x * 0.03f;
+					float t_point_y = point.y * 0.03f;
 
 					float dx = t_point_x - norm_mouse_x;
 					float dy = t_point_y - norm_mouse_y;
@@ -385,8 +385,8 @@ void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
 		norm_mouse_x *= aspect_ratio;
 
 		// Convert normalized coordinates to world coordinates
-		float new_x = norm_mouse_x / 0.06f;
-		float new_y = norm_mouse_y / 0.06f;
+		float new_x = norm_mouse_x / 0.03f;
+		float new_y = norm_mouse_y / 0.03f;
 
 		auto [i, j] = *moving_point;
 		cloth.points[i][j].x = new_x;
@@ -408,10 +408,10 @@ char* read_shader_src(const std::string& path) {
 	return src;
 }
 
-void simulateCUDA(float dt) {
+void simulate_CUDA(float dt) {
 	std::vector<Point> flat_points = flatten_points(cloth.points, cloth.points.size(), cloth.points[0].size());
 
-	simulateKernel(flat_points.data(), cloth.springs.data(), N, M, cloth.springs.size(), dt, cloth.g, cloth.g_on, cloth.m);
+	simulate_kernel(flat_points.data(), cloth.springs.data(), N, M, cloth.springs.size(), dt, cloth.g, cloth.g_on, cloth.m);
 
 	unflatten_points(cloth.points, flat_points, cloth.points.size(), cloth.points[0].size());
 }
