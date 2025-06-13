@@ -146,32 +146,3 @@ A Rust implementation
 A CUDA implementation.
 The choice of language from which to host CUDA is left open e.g. C++, C# or Python
 
-## Lab book entries
-
-1. GPU design - Detail and reflect upon the design of your GPU implementation.  Focus on the parallel aspects of your solution.  Clearly explain how you have used threads, mutual exclusion and synchronization in your GPU implementation. (approx. 300-500 words)
-2. CPU design - Detail and reflect upon the design of your CPU implementation.  Focus on the parallel aspects of your solution. Clearly explain how you have used threads, mutual exclusion and synchronization in your CPU implementation.  (approx. 300-500 words)
-3. Performance metrics - Compare the performance of your GPU and CPU implementations, both WITH and WITHOUT graphics.  Include a description of your performance benchmarks. (approx. 300-500 words)
-
-## Demonstration
-
-You will be required to demonstrate your two solutions in FEN 177, running on the lab PCs
-
-## Submission
-
-All submissions are via Canvas.
-
-### Software - CUDA
-
-Your code, in the form of a Visual Studio solution, source code, and working executables/DLLs, along with any required assets.
-
-### Software - Rust
-
-Your code, in the form of a Visual Studio Code, source code, and working executables, along with any required assets.
-
-### Video
-
-A short narrated video showing both the CPU and GPU implementations
-
-### Lab book
-
-The full lab book containing all labs, as a PDF.
